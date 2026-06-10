@@ -27,12 +27,16 @@ Draft / phase 1 of 5 (see spec §9). Currently implemented:
 - Core types: `ExecutionProfile`, `ExecutionMethod` (`.local`/`.remote`), `ProfileRule`,
   `ExecutionPlan`, `RemoteHost` (multi-server routing), `ProfileConfiguration`,
   router protocols, first-match-wins resolution.
-- `ClientRouter` (resolution + hosts map — transport TODO) and `ServerRouter`
-  (local for its own hosts, remote for foreign hosts).
-- Resolution test suite covering the venue example.
+- `ClientRouter` with a real HTTP transport (`URLSessionTransport`, pluggable via
+  `RemoteTransport`) and `ServerRouter` (local for its own hosts, remote for foreign hosts).
+- `OperationRegistry` — server-side dispatch (operationID → decode envelope, execute,
+  encode output); what phase 3's generated routes will register into.
+- Test suites: resolution, host routing, envelope round-trip.
+- [examples/VenueExample](examples/VenueExample) — the venue flow end-to-end over real
+  HTTP with hand-written envelopes (`swift run venue-demo`).
 
-Not yet: HTTP/WebSocket transport, `@ExecutionProfile` macro (`MIOExecutionMacros`),
-build-tool plugin (`MIOExecutionGen`).
+Not yet: `@ExecutionProfile` macro (`MIOExecutionMacros`), build-tool plugin
+(`MIOExecutionGen`), MIOServerKit binding, idempotency dedup / auth middleware.
 
 ## Targets
 

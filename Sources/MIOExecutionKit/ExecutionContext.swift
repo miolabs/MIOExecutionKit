@@ -66,5 +66,9 @@ public enum ProfiledOperationError: Error, Sendable {
     case serverUnreachable(operationID: String)
     /// The plan's host has no base URL in the router's deployment config.
     case unknownHost(RemoteHost, operationID: String)
+    /// The server has no registered handler for this operationID.
+    case unknownOperation(String)
+    /// The server answered with a non-2xx status.
+    case remoteFailure(operationID: String, statusCode: Int)
     case notImplemented(String)
 }

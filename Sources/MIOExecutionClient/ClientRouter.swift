@@ -16,10 +16,14 @@ public struct ClientRouter: ExecutionRouter {
     /// e.g. https://api.example.com/billing). A single-server app passes
     /// [.default: serverURL] and never thinks about hosts again.
     public let hosts: [RemoteHost: URL]
+    public let transport: any RemoteTransport
 
-    public init(profile: ExecutionProfile, hosts: [RemoteHost: URL] = [:]) {
+    public init(profile: ExecutionProfile,
+                hosts: [RemoteHost: URL] = [:],
+                transport: any RemoteTransport = URLSessionTransport()) {
         self.profile = profile
         self.hosts = hosts
+        self.transport = transport
     }
 
     public func resolve(operationID: String,
@@ -40,9 +44,8 @@ public struct ClientRouter: ExecutionRouter {
         guard let baseURL = hosts[plan.host] else {
             throw ProfiledOperationError.unknownHost(plan.host, operationID: plan.operationID)
         }
-        // TODO(phase 1): HTTP transport — POST {baseURL}/op/{operationID} with the
-        // envelope JSON, idempotency key + tenancy headers (spec §7.1–7.2).
-        _ = baseURL
-        throw ProfiledOperationError.notImplemented("ClientRouter.executeRemote — phase 1 transport")
+        let body = try JSONEncoder().encode(request)
+        let data = try await transport.send(operationID: plan.operationID, to: baseURL, body: body)
+        return try JSONDecoder().decode(Op.Output.self, from: data)
     }
 }
