@@ -1,9 +1,11 @@
 # MIOExecutionKit — Profile-Driven Execution for "Serverless" Swift Apps
 
-**Status:** Draft 0.3
+**Status:** Draft 0.4
 **Author:** Javier / Dual Link
 **Targets:** Swift 6, SwiftSyntax macros, SPM build-tool plugins, MIOServerKit / MIOPersistentStore
 
+> **Changes from 0.3:** Multi-server (micro-server) support via **`RemoteHost`** (§3.7): an open-ended logical name declared per function (`host:` in the macro, default `.default`), mapped to base URLs / path prefixes in deployment configuration — never in code. Only meaningful for `.remote`. Consequence for servers: a server is the authority **for its own hosts only** — `ServerRouter` resolves foreign-host operations `.remote` (server-to-server RPC). The build plugin groups generated routes and the manifest by host.
+>
 > **Changes from 0.2.1:** Execution is **binary** — `.local` or `.remote`. The former `.async` case is gone: delta sync is not an execution decision, it is what the persistence layer does after any local save (Core Data / MIOPersistentStore generate deltas from save notifications). That belongs to a different library and is out of scope here; `SyncMethod` is renamed `ExecutionMethod`, `executeDeferred` is removed from the router, and the venue example loses its fallback rule (no match → local, deltas sync anyway).
 >
 > **Changes from 0.2:** Project named **MIOExecutionKit**; `AppProfile` renamed `ExecutionProfile`; macro renamed `@ExecutionProfile`; framework packages renamed accordingly.
@@ -171,6 +173,7 @@ Order matters and **first match wins**. The macro emits compile errors for unrea
 public struct ExecutionPlan: Sendable {
     public let method: ExecutionMethod     // total: resolve() always returns .local or .remote
     public let operationID: String         // "AccountService.chargeToAccount(_:)" (+ schema hash, §7.3)
+    public let host: RemoteHost            // which server executes it when method == .remote (§3.7)
 }
 ```
 
@@ -187,6 +190,31 @@ A small optional config file remains as an operational escape hatch — forcing 
 ```
 
 Precedence (highest first): **runtime override > macro rules > `.local`**.
+
+### 3.7 RemoteHost (multi-server routing)
+
+Apps cannot be assumed to talk to a single server: in a micro-server design, different operations belong to different services. `RemoteHost` is the logical name of the server that **owns** an operation — open-ended like `ExecutionProfile`, with one built-in value:
+
+```swift
+public struct RemoteHost: RawRepresentable, Hashable, Codable, Sendable {
+    public let rawValue: String
+    public static let `default` = RemoteHost(rawValue: "default")
+}
+
+// Application-side, only in multi-server designs:
+public extension RemoteHost {
+    static let accounts = RemoteHost(rawValue: "accounts")
+    static let billing  = RemoteHost(rawValue: "billing")
+}
+```
+
+Three rules keep it simple:
+
+- **Declared in code, resolved in config.** The function declares the *logical* host (`host:` in the macro, §5.1); what URL that means is deployment configuration handed to the router at startup (`[RemoteHost: URL]` — the URL may include a path prefix, e.g. `https://api.example.com/billing`). Code never contains addresses.
+- **Only meaningful for `.remote`.** A `.local` resolution ignores the host entirely. Single-server apps never mention hosts: everything is `.default`, the router gets one URL, done.
+- **A server is the authority for its own hosts only.** `ServerRouter` declares which host(s) it serves (`localHosts`); operations belonging to those resolve `.local` as before, but an operation owned by a *different* host resolves `.remote` even on a server — a server-to-server RPC through the same hosts map a client would use. The single-server case (`localHosts = [.default]`, everything local) falls out unchanged.
+
+An unknown host at execution time (no URL in the deployment config) fails fast with `ProfiledOperationError.unknownHost` — a configuration error, not a network error.
 
 ---
 
@@ -226,9 +254,12 @@ The key property: **`MyAppKit` compiles unmodified into both executables.** Only
 ```swift
 /// Attached to a function inside a type conforming to `ProfiledService`.
 /// Rules are evaluated in declaration order; first match wins; no match → .local.
+/// `host:` names the server that owns the operation (micro-server designs);
+/// single-server apps omit it.
 @attached(body)
 @attached(peer, names: prefixed(__local_), prefixed(__Op_))
 public macro ExecutionProfile(
+    host: RemoteHost = .default,
     _ rules: ProfileRule...
 ) = #externalMacro(module: "MIOExecutionMacros", type: "ExecutionProfileMacro")
 ```
@@ -262,12 +293,14 @@ public struct DocumentService: ProfiledService {
 public struct AccountService: ProfiledService {
     let context: ExecutionContext
 
-    /// Customer accounts are shared across all POSes in the venue → remote.
-    /// Single-POS venues flip `clientAccountSyncRemotely` off in settings:
-    /// the rule stops matching, the call runs locally, and its saves reach
-    /// the server as deltas like any other local mutation — no recompile,
-    /// no fallback rule needed.
+    /// Customer accounts are shared across all POSes in the venue → remote,
+    /// owned by the accounts service (in a micro-server deployment; with a
+    /// single server, omit `host:`). Single-POS venues flip
+    /// `clientAccountSyncRemotely` off in settings: the rule stops matching,
+    /// the call runs locally, and its saves reach the server as deltas like
+    /// any other local mutation — no recompile, no fallback rule needed.
     @ExecutionProfile(
+        host: .accounts,
         .manager(.remote),
         .pos(.remote, when: \PosConfiguration.clientAccountSyncRemotely)
     )
@@ -291,6 +324,7 @@ Expansion of `chargeToAccount` (conceptually):
 public func chargeToAccount(_ charge: AccountCharge) async throws -> AccountBalance {
     let plan = context.router.resolve(
         operationID: __Op_chargeToAccount.operationID,
+        host: __Op_chargeToAccount.host,
         rules: [
             .manager(.remote),
             .pos(.remote, when: \PosConfiguration.clientAccountSyncRemotely)
@@ -316,6 +350,7 @@ private func __local_chargeToAccount(_ charge: AccountCharge) async throws -> Ac
 // PUBLIC: the generated Routes.swift lives in the server target, a different module.
 public struct __Op_chargeToAccount: ProfiledOperation {
     public static let operationID = "AccountService.chargeToAccount(_:)"
+    public static let host = RemoteHost.accounts   // omitted when .default
     public let charge: AccountCharge
     public func execute(in ctx: ExecutionContext) async throws -> AccountBalance {
         try await AccountService(context: ctx).__local_chargeToAccount(charge)
@@ -347,6 +382,7 @@ Three artifacts per annotated function:
 ```swift
 public protocol ExecutionRouter: Sendable {
     func resolve(operationID: String,
+                 host: RemoteHost,
                  rules: [ProfileRule],
                  configuration: any ProfileConfiguration) -> ExecutionPlan
 
@@ -365,8 +401,8 @@ public struct ExecutionContext: Sendable {
 
 Resolution state lives **only** in the router — there is no global registry or singleton. This is what makes the test matrix (§8.4) trivial: a `TestRouter` forcing any plan slots into a test `ExecutionContext` without touching shared state.
 
-- **MIOExecutionClient** ships `ClientRouter`: `.remote` → HTTP/WebSocket RPC to the server (`POST /op/{operationID}` with the envelope JSON); `.local` → run the local body.
-- **MIOExecutionServer** ships `ServerRouter`: `resolve()` ignores rules and always returns `.local` — no rule matches the `server` profile by construction, and even an explicit `.remote` reaching the server executes locally, because the server *is* the authority.
+- **MIOExecutionClient** ships `ClientRouter`: constructed with the deployment hosts map (`[RemoteHost: URL]`). `.remote` → HTTP/WebSocket RPC to the plan's host (`POST {baseURL}/op/{operationID}` with the envelope JSON); `.local` → run the local body.
+- **MIOExecutionServer** ships `ServerRouter`: constructed with the host(s) it serves (`localHosts`, default `[.default]`) plus the URLs of sibling services. Own-host operations resolve `.local` regardless of rules — the server *is* the authority for them. Foreign-host operations resolve `.remote` (server-to-server RPC, §3.7).
 - `PersistentStoreAdapter` is deliberately minimal in v1: `performExclusive`, insert/fetch/delete, `incrementSequence`. MIOPersistentStore is the first-class client adapter; Core Data / SwiftData adapters come later.
 
 ### 6.2 Relationship to delta sync (out of scope, but adjacent)
@@ -391,7 +427,7 @@ The last row is the main sharp edge developers must understand: when a local fun
 ### 6.4 Degraded mode (connectivity loss)
 
 - A single-POS venue with the local-account flag keeps working fully offline by construction — nothing it does resolves `.remote`.
-- Any installation that loses connectivity: `.local` operations are unaffected; `.remote` operations **fail fast with a typed error** (`ProfiledOperationError.serverUnreachable`) that the app layer can catch and surface. The framework does not silently downgrade `.remote` to `.local` — if a function should degrade, that is a `when:` condition the developer writes deliberately.
+- Any installation that loses connectivity: `.local` operations are unaffected; `.remote` operations **fail fast with a typed error** (`ProfiledOperationError.serverUnreachable`, carrying the unreachable host — in multi-server deployments one service can be down while others work) that the app layer can catch and surface. The framework does not silently downgrade `.remote` to `.local` — if a function should degrade, that is a `when:` condition the developer writes deliberately.
 
 ---
 
@@ -399,7 +435,7 @@ The last row is the main sharp edge developers must understand: when a local fun
 
 A SPM **build-tool plugin** (`MIOExecutionGen`) attached to the server target:
 
-1. Parses the shared module's sources with SwiftSyntax, collecting every `@ExecutionProfile` function **whose rule list contains a `.remote` rule** (same visitor logic the macro uses, reused as a library). Conditions are irrelevant to the plugin — a conditional `.remote` means "may be remote," which is enough to require an endpoint. Functions without a `.remote` rule get **no route**: the RPC surface is exactly the set of operations that can legitimately arrive over the wire, nothing more.
+1. Parses the shared module's sources with SwiftSyntax, collecting every `@ExecutionProfile` function **whose rule list contains a `.remote` rule** (same visitor logic the macro uses, reused as a library). Conditions are irrelevant to the plugin — a conditional `.remote` means "may be remote," which is enough to require an endpoint. Functions without a `.remote` rule get **no route**: the RPC surface is exactly the set of operations that can legitimately arrive over the wire, nothing more. Operations are **grouped by `host:`**, and each server target declares which host(s) it serves in its plugin configuration — a `billing` server registers only billing-owned operations.
 2. Emits `Generated/Routes.swift` registering one MIOServerKit endpoint per operation, using the **async dispatcher overload** that `Endpoint.post` already provides (`AsyncEndpointRequestDispatcher`) — no `EventLoopPromise` bridging, no semaphores on NIO workers:
 
 ```swift
@@ -420,7 +456,7 @@ public func registerProfiledOperations(_ router: MIOServerKit.Router,
 }
 ```
 
-3. Emits an `operations-manifest.json` (operationID → request/response schema) usable later for non-Swift clients or API docs.
+3. Emits an `operations-manifest.json` (operationID → host, request/response schema) usable later for non-Swift clients or API docs.
 
 Because the envelope structs generated by the macro already know how to decode and execute themselves, the generated route bodies are uniform one-liners — the plugin never needs to understand business logic or evaluate conditions.
 
@@ -449,6 +485,7 @@ Auth, tenancy (`app_id` / venue), and idempotency keys ride in envelope headers 
 4. **Testing profile matrix** — provide a `TestRouter` that forces any plan and a `TestConfiguration`, so the same XCTest suite runs each annotated function under both methods and both condition branches.
 5. **Plugin sandbox** — `MIOExecutionGen` must read the shared package's sources from the server target's plugin. SPM allows cross-package reads in the sandbox for local packages; pin this assumption in the first phase-3 spike, it is the part most likely to fight SPM.
 6. **Streaming / non-Codable returns** — out of scope v1; consider `AsyncThrowingStream` support over WebSocket later.
+7. **Service-to-service auth** — cross-host calls from `ServerRouter` (§3.7) need a service identity (not a user/installation identity) in the envelope headers; decide the scheme (shared secret, mTLS, signed tokens) before phase 4's middleware.
 
 ---
 

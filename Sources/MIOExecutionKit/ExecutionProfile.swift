@@ -25,6 +25,18 @@ public enum ExecutionMethod: String, Codable, Sendable {
     case remote
 }
 
+/// Logical name of the server that owns a remote operation. Apps with a single
+/// server never mention it (everything is `.default`); micro-server designs
+/// declare their own (`.accounts`, `.billing`, …) and the routers map each
+/// name to a base URL / path prefix from deployment configuration — never code.
+/// Only meaningful when an operation resolves `.remote`.
+public struct RemoteHost: RawRepresentable, Hashable, Codable, Sendable {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+
+    public static let `default` = RemoteHost(rawValue: "default")
+}
+
 /// Installation-level settings — what differs between two installations of the
 /// same profile (e.g. the main-area POS and the terrace POS). The app owns the
 /// concrete type and its storage; rule conditions read it at call time.

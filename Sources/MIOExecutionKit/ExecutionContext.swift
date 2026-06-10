@@ -5,6 +5,7 @@
 
 public protocol ExecutionRouter: Sendable {
     func resolve(operationID: String,
+                 host: RemoteHost,
                  rules: [ProfileRule],
                  configuration: any ProfileConfiguration) -> ExecutionPlan
 
@@ -43,12 +44,19 @@ public protocol ProfiledService: Sendable {
     init(context: ExecutionContext)
 }
 
-/// Codable envelope generated (phase 2: by the macro) per .sync-capable
+/// Codable envelope generated (phase 2: by the macro) per .remote-capable
 /// operation — simultaneously the wire format and the server-side executor.
 public protocol ProfiledOperation: Codable, Sendable {
     associatedtype Output: Codable & Sendable
     static var operationID: String { get }
+    /// Which server owns this operation (micro-server designs). The build
+    /// plugin groups generated routes and the manifest by this value.
+    static var host: RemoteHost { get }
     func execute(in context: ExecutionContext) async throws -> Output
+}
+
+public extension ProfiledOperation {
+    static var host: RemoteHost { .default }
 }
 
 public enum ProfiledOperationError: Error, Sendable {
@@ -56,5 +64,7 @@ public enum ProfiledOperationError: Error, Sendable {
     /// downgraded to .local — degrading is a `when:` condition the
     /// developer writes deliberately (spec §6.4).
     case serverUnreachable(operationID: String)
+    /// The plan's host has no base URL in the router's deployment config.
+    case unknownHost(RemoteHost, operationID: String)
     case notImplemented(String)
 }

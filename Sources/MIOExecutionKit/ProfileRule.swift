@@ -39,10 +39,13 @@ public struct ProfileRule: Sendable {
 public struct ExecutionPlan: Sendable {
     public let method: ExecutionMethod
     public let operationID: String
+    /// Which server executes the operation when method == .remote.
+    public let host: RemoteHost
 
-    public init(method: ExecutionMethod, operationID: String) {
+    public init(method: ExecutionMethod, operationID: String, host: RemoteHost = .default) {
         self.method = method
         self.operationID = operationID
+        self.host = host
     }
 }
 
@@ -52,13 +55,14 @@ public enum ProfileResolution {
     /// match resolves to .local. Runtime overrides (spec §3.6) sit above this
     /// in the routers, not here.
     public static func resolve(operationID: String,
+                               host: RemoteHost = .default,
                                rules: [ProfileRule],
                                profile: ExecutionProfile,
                                configuration: any ProfileConfiguration) -> ExecutionPlan {
         for rule in rules where rule.profile == profile {
             if let condition = rule.condition, condition(configuration) == false { continue }
-            return ExecutionPlan(method: rule.method, operationID: operationID)
+            return ExecutionPlan(method: rule.method, operationID: operationID, host: host)
         }
-        return ExecutionPlan(method: .local, operationID: operationID)
+        return ExecutionPlan(method: .local, operationID: operationID, host: host)
     }
 }

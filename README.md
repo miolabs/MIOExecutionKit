@@ -8,6 +8,7 @@ layer's job (Core Data / MIOPersistentStore save notifications), not this kit's.
 
 ```swift
 @ExecutionProfile(
+    host: .accounts,   // micro-server designs only; single-server apps omit it
     .manager(.remote),
     .pos(.remote, when: \PosConfiguration.clientAccountSyncRemotely)
 )
@@ -24,8 +25,10 @@ Full design: [docs/MIOExecutionKit-Spec.md](docs/MIOExecutionKit-Spec.md)
 Draft / phase 1 of 5 (see spec §9). Currently implemented:
 
 - Core types: `ExecutionProfile`, `ExecutionMethod` (`.local`/`.remote`), `ProfileRule`,
-  `ExecutionPlan`, `ProfileConfiguration`, router protocols, first-match-wins resolution.
-- `ClientRouter` (resolution only — transport TODO) and `ServerRouter` (always `.local`).
+  `ExecutionPlan`, `RemoteHost` (multi-server routing), `ProfileConfiguration`,
+  router protocols, first-match-wins resolution.
+- `ClientRouter` (resolution + hosts map — transport TODO) and `ServerRouter`
+  (local for its own hosts, remote for foreign hosts).
 - Resolution test suite covering the venue example.
 
 Not yet: HTTP/WebSocket transport, `@ExecutionProfile` macro (`MIOExecutionMacros`),

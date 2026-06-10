@@ -3,6 +3,7 @@
 //  MIOExecutionKitTests
 //
 
+import Foundation
 import Testing
 import MIOExecutionKit
 import MIOExecutionClient
@@ -12,6 +13,10 @@ extension ExecutionProfile {
     static let pos     = ExecutionProfile(rawValue: "pos")
     static let manager = ExecutionProfile(rawValue: "manager")
     static let server  = ExecutionProfile(rawValue: "server")
+}
+
+extension RemoteHost {
+    static let accounts = RemoteHost(rawValue: "accounts")
 }
 
 struct PosConfiguration: ProfileConfiguration {
@@ -103,16 +108,71 @@ let chargeToAccountRules: [ProfileRule] = [
     @Test func clientRouterDelegatesToResolution() {
         let router = ClientRouter(profile: .pos)
         let plan = router.resolve(operationID: "Account.charge(_:)",
+                                  host: .default,
                                   rules: chargeToAccountRules,
                                   configuration: PosConfiguration())
         #expect(plan.method == .remote)
     }
+}
 
-    @Test func serverRouterAlwaysResolvesLocal() {
-        let router = ServerRouter()
+@Suite struct HostRoutingTests {
+
+    @Test func hostDefaultsToDefault() {
+        let plan = ProfileResolution.resolve(operationID: "Account.charge(_:)",
+                                             rules: chargeToAccountRules,
+                                             profile: .manager,
+                                             configuration: EmptyConfiguration())
+        #expect(plan.host == .default)
+    }
+
+    @Test func planCarriesDeclaredHost() {
+        let plan = ProfileResolution.resolve(operationID: "Account.charge(_:)",
+                                             host: .accounts,
+                                             rules: chargeToAccountRules,
+                                             profile: .manager,
+                                             configuration: EmptyConfiguration())
+        #expect(plan.method == .remote)
+        #expect(plan.host == .accounts)
+    }
+
+    @Test func serverExecutesOwnHostLocally() {
+        let router = ServerRouter(localHosts: [.accounts])
         let plan = router.resolve(operationID: "Account.charge(_:)",
+                                  host: .accounts,
                                   rules: chargeToAccountRules,
                                   configuration: EmptyConfiguration())
         #expect(plan.method == .local)
+    }
+
+    @Test func serverRoutesForeignHostRemotely() {
+        // Micro-server design: a server is the authority only for its own
+        // hosts; operations owned elsewhere become server-to-server RPCs.
+        let router = ServerRouter(localHosts: [.default])
+        let plan = router.resolve(operationID: "Account.charge(_:)",
+                                  host: .accounts,
+                                  rules: chargeToAccountRules,
+                                  configuration: EmptyConfiguration())
+        #expect(plan.method == .remote)
+        #expect(plan.host == .accounts)
+    }
+
+    @Test func unknownHostThrowsTypedError() async {
+        struct DummyOp: ProfiledOperation {
+            static let operationID = "Dummy.op()"
+            func execute(in context: ExecutionContext) async throws -> Int { 0 }
+        }
+        let router = ClientRouter(profile: .pos, hosts: [:])
+        let plan = ExecutionPlan(method: .remote, operationID: DummyOp.operationID, host: .accounts)
+        await #expect(throws: ProfiledOperationError.self) {
+            _ = try await router.executeRemote(plan, request: DummyOp(), as: Int.self)
+        }
+    }
+
+    @Test func envelopeHostDefaultsToDefault() {
+        struct DummyOp: ProfiledOperation {
+            static let operationID = "Dummy.op()"
+            func execute(in context: ExecutionContext) async throws -> Int { 0 }
+        }
+        #expect(DummyOp.host == .default)
     }
 }
