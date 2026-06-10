@@ -436,22 +436,26 @@ The last row is the main sharp edge developers must understand: when a local fun
 A SPM **build-tool plugin** (`MIOExecutionGen`) attached to the server target:
 
 1. Parses the shared module's sources with SwiftSyntax, collecting every `@ExecutionProfile` function **whose rule list contains a `.remote` rule** (same visitor logic the macro uses, reused as a library). Conditions are irrelevant to the plugin — a conditional `.remote` means "may be remote," which is enough to require an endpoint. Functions without a `.remote` rule get **no route**: the RPC surface is exactly the set of operations that can legitimately arrive over the wire, nothing more. Operations are **grouped by `host:`**, and each server target declares which host(s) it serves in its plugin configuration — a `billing` server registers only billing-owned operations.
-2. Emits `Generated/Routes.swift` registering one MIOServerKit endpoint per operation, using the **async dispatcher overload** that `Endpoint.post` already provides (`AsyncEndpointRequestDispatcher`) — no `EventLoopPromise` bridging, no semaphores on NIO workers:
+2. Emits `Generated/Routes.swift` registering every operation into an `OperationRegistry`, dispatched by a **single** `/op/:operationID` MIOServerKit route using the **async dispatcher overload** `Endpoint.post` already provides — no `EventLoopPromise` bridging, no semaphores on NIO workers. One route instead of one per operation, deliberately: operationIDs contain `(`, `)`, `:` which routers interpret as pattern syntax, so they travel strictly percent-encoded as a single path *value*, never as route *patterns*:
 
 ```swift
 // GENERATED — do not edit
+import MIOExecutionServer
 import MIOServerKit
 import MyAppKit
 
 public func registerProfiledOperations(_ router: MIOServerKit.Router,
                                        context: @escaping () -> ExecutionContext) {
-    router.post("/op/\(__Op_chargeToAccount.operationID)") { req in
-        let op = try req.decode(__Op_chargeToAccount.self)
-        return try await op.execute(in: context())
-    }
-    router.post("/op/\(__Op_nextDocumentNumber.operationID)") { req in
-        let op = try req.decode(__Op_nextDocumentNumber.self)
-        return try await op.execute(in: context())
+    var registry = OperationRegistry()
+    registry.register(__Op_chargeToAccount.self)
+    registry.register(__Op_nextDocumentNumber.self)
+    let operations = registry
+
+    router.endpoint("/op/:operationID").post { (ctx: RouterContext) async throws -> (any Sendable)? in
+        let raw: String = try ctx.urlParam("operationID")
+        return try await operations.handle(operationID: raw.removingPercentEncoding ?? raw,
+                                           body: ctx.bodyAsData() ?? Data(),
+                                           context: context())
     }
 }
 ```
