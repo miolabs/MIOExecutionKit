@@ -11,10 +11,6 @@ public protocol ExecutionRouter: Sendable {
     func executeRemote<Op: ProfiledOperation>(
         _ plan: ExecutionPlan, request: Op, as output: Op.Output.Type
     ) async throws -> Op.Output
-
-    func executeDeferred<T: Sendable>(
-        _ plan: ExecutionPlan, _ body: @Sendable () async throws -> T
-    ) async throws -> T
 }
 
 /// Adapter over the local (MIOPersistentStore/SQLite) or server (PostgreSQL)
@@ -56,9 +52,9 @@ public protocol ProfiledOperation: Codable, Sendable {
 }
 
 public enum ProfiledOperationError: Error, Sendable {
-    /// A .sync operation could not reach the server. Never silently
+    /// A .remote operation could not reach the server. Never silently
     /// downgraded to .local — degrading is a `when:` condition the
-    /// developer writes deliberately (spec §6.5).
+    /// developer writes deliberately (spec §6.4).
     case serverUnreachable(operationID: String)
     case notImplemented(String)
 }

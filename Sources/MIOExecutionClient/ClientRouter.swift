@@ -6,9 +6,9 @@
 import MIOExecutionKit
 
 /// Router linked into app targets (POS, manager, …).
-/// .sync  → HTTP/WebSocket RPC to the server (POST /op/{operationID})
-/// .async → run body locally, enqueue changelog deltas for the sync engine
-/// .local → run body
+/// .remote → HTTP/WebSocket RPC to the server (POST /op/{operationID})
+/// .local  → run the local body; the persistence layer's delta sync picks
+///           up the saves on its own — that is not this router's business.
 public struct ClientRouter: ExecutionRouter {
     public let profile: ExecutionProfile
 
@@ -32,13 +32,5 @@ public struct ClientRouter: ExecutionRouter {
         // TODO(phase 1): HTTP transport — POST /op/{operationID} with the envelope
         // JSON, idempotency key + tenancy headers (spec §7.1–7.2).
         throw ProfiledOperationError.notImplemented("ClientRouter.executeRemote — phase 1 transport")
-    }
-
-    public func executeDeferred<T: Sendable>(
-        _ plan: ExecutionPlan, _ body: @Sendable () async throws -> T
-    ) async throws -> T {
-        // TODO(phase 4): record changelog deltas of the local transaction and
-        // hand them to the background sync service (spec §6.2).
-        try await body()
     }
 }

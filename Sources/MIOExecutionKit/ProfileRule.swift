@@ -6,15 +6,19 @@
 /// One (profile, method, condition?) triple. The @ExecutionProfile macro takes
 /// a variadic list of these; rules are evaluated in declaration order, first
 /// match wins, and no match resolves to .local.
+///
+/// Since .local is the global default, rules almost always declare .remote.
+/// An explicit .local rule is still meaningful as a conditional exception
+/// placed before a broader rule for the same profile.
 public struct ProfileRule: Sendable {
     public let profile: ExecutionProfile
-    public let method: SyncMethod
+    public let method: ExecutionMethod
     /// Evaluated at call time against the installation configuration.
     /// Type-erased at construction from a typed KeyPath.
     public let condition: (@Sendable (any ProfileConfiguration) -> Bool)?
 
     public init(profile: ExecutionProfile,
-                method: SyncMethod,
+                method: ExecutionMethod,
                 condition: (@Sendable (any ProfileConfiguration) -> Bool)? = nil) {
         self.profile = profile
         self.method = method
@@ -22,7 +26,7 @@ public struct ProfileRule: Sendable {
     }
 
     public init<C: ProfileConfiguration>(profile: ExecutionProfile,
-                                         method: SyncMethod,
+                                         method: ExecutionMethod,
                                          when keyPath: KeyPath<C, Bool> & Sendable) {
         self.init(profile: profile, method: method) {
             ($0 as? C)?[keyPath: keyPath] ?? false
@@ -31,13 +35,12 @@ public struct ProfileRule: Sendable {
 }
 
 /// The resolved decision for one call. `resolve()` is total: it always returns
-/// one of the three methods, falling back to .local when no rule matches.
+/// .local or .remote, falling back to .local when no rule matches.
 public struct ExecutionPlan: Sendable {
-    public let method: SyncMethod
+    public let method: ExecutionMethod
     public let operationID: String
-    public var isServerAuthoritative: Bool { method == .sync }
 
-    public init(method: SyncMethod, operationID: String) {
+    public init(method: ExecutionMethod, operationID: String) {
         self.method = method
         self.operationID = operationID
     }

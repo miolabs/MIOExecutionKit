@@ -19,18 +19,19 @@ struct PosConfiguration: ProfileConfiguration {
 }
 
 extension ProfileRule {
-    static func pos(_ m: SyncMethod) -> ProfileRule { .init(profile: .pos, method: m) }
-    static func pos(_ m: SyncMethod, when kp: KeyPath<PosConfiguration, Bool> & Sendable) -> ProfileRule {
+    static func pos(_ m: ExecutionMethod) -> ProfileRule { .init(profile: .pos, method: m) }
+    static func pos(_ m: ExecutionMethod, when kp: KeyPath<PosConfiguration, Bool> & Sendable) -> ProfileRule {
         .init(profile: .pos, method: m, when: kp)
     }
-    static func manager(_ m: SyncMethod) -> ProfileRule { .init(profile: .manager, method: m) }
+    static func manager(_ m: ExecutionMethod) -> ProfileRule { .init(profile: .manager, method: m) }
 }
 
-// The venue example from the spec (§5.2).
+// The venue example from the spec (§5.2): remote for the manager, remote on
+// the POS only while the venue runs multiple POSes. No fallback rule needed —
+// condition false → no match → local.
 let chargeToAccountRules: [ProfileRule] = [
-    .manager(.sync),
-    .pos(.sync, when: \PosConfiguration.clientAccountSyncRemotely),
-    .pos(.async),
+    .manager(.remote),
+    .pos(.remote, when: \PosConfiguration.clientAccountSyncRemotely),
 ]
 
 @Suite struct ResolutionTests {
@@ -41,7 +42,6 @@ let chargeToAccountRules: [ProfileRule] = [
                                              profile: .server,
                                              configuration: EmptyConfiguration())
         #expect(plan.method == .local)
-        #expect(plan.isServerAuthoritative == false)
     }
 
     @Test func unannotatedEquivalentIsLocalEverywhere() {
@@ -59,8 +59,7 @@ let chargeToAccountRules: [ProfileRule] = [
                                              rules: chargeToAccountRules,
                                              profile: .manager,
                                              configuration: EmptyConfiguration())
-        #expect(plan.method == .sync)
-        #expect(plan.isServerAuthoritative)
+        #expect(plan.method == .remote)
     }
 
     @Test func conditionTrueTakesConditionalRule() {
@@ -68,25 +67,27 @@ let chargeToAccountRules: [ProfileRule] = [
                                              rules: chargeToAccountRules,
                                              profile: .pos,
                                              configuration: PosConfiguration(clientAccountSyncRemotely: true))
-        #expect(plan.method == .sync)
+        #expect(plan.method == .remote)
     }
 
-    @Test func conditionFalseFallsThroughToNextRule() {
-        // The single-POS venue: flag off → same call runs locally + async.
+    @Test func conditionFalseResolvesLocal() {
+        // The single-POS venue: flag off → no rule matches → local execution;
+        // the persistence layer's delta sync handles the rest.
         let plan = ProfileResolution.resolve(operationID: "Account.charge(_:)",
                                              rules: chargeToAccountRules,
                                              profile: .pos,
                                              configuration: PosConfiguration(clientAccountSyncRemotely: false))
-        #expect(plan.method == .async)
+        #expect(plan.method == .local)
     }
 
     @Test func firstMatchWins() {
-        let rules: [ProfileRule] = [.pos(.async), .pos(.sync)]
+        // Conditional .local exception placed before a broader .remote rule.
+        let rules: [ProfileRule] = [.pos(.local), .pos(.remote)]
         let plan = ProfileResolution.resolve(operationID: "Op",
                                              rules: rules,
                                              profile: .pos,
                                              configuration: EmptyConfiguration())
-        #expect(plan.method == .async)
+        #expect(plan.method == .local)
     }
 
     @Test func wrongConfigurationTypeFailsConditionSafely() {
@@ -96,7 +97,7 @@ let chargeToAccountRules: [ProfileRule] = [
                                              rules: chargeToAccountRules,
                                              profile: .pos,
                                              configuration: EmptyConfiguration())
-        #expect(plan.method == .async)
+        #expect(plan.method == .local)
     }
 
     @Test func clientRouterDelegatesToResolution() {
@@ -104,7 +105,7 @@ let chargeToAccountRules: [ProfileRule] = [
         let plan = router.resolve(operationID: "Account.charge(_:)",
                                   rules: chargeToAccountRules,
                                   configuration: PosConfiguration())
-        #expect(plan.method == .sync)
+        #expect(plan.method == .remote)
     }
 
     @Test func serverRouterAlwaysResolvesLocal() {

@@ -12,18 +12,17 @@ public struct ExecutionProfile: RawRepresentable, Hashable, Codable, Sendable {
     public init(rawValue: String) { self.rawValue = rawValue }
 }
 
-/// How a function executes relative to the server.
-public enum SyncMethod: String, Codable, Sendable {
+/// Where a function executes. Binary by design — delta sync is not an
+/// execution decision; it is what the persistence layer does after any
+/// local save (Core Data / MIOPersistentStore save notifications).
+public enum ExecutionMethod: String, Codable, Sendable {
     /// Execute locally against the local store. Never talks to the server.
+    /// Saves are picked up by the persistence layer's delta sync as usual.
     case local
-
-    /// Execute locally, persist locally, enqueue delta; background service
-    /// pushes/pulls via the changelog sync engine.
-    case async
 
     /// Always execute on the server. The client call is an RPC; the local
     /// store may be updated from the response (read-through).
-    case sync
+    case remote
 }
 
 /// Installation-level settings — what differs between two installations of the
