@@ -25,10 +25,19 @@ public struct URLSessionTransport: RemoteTransport {
         self.session = session
     }
 
+    /// operationIDs contain characters routers interpret (`(`, `)`, `:`), so
+    /// the path segment is strictly percent-encoded: only alphanumerics and
+    /// `.`/`_`/`-` survive raw. Servers percent-decode the segment back.
+    private static let operationIDAllowed =
+        CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+
     public func send(operationID: String, to baseURL: URL, body: Data) async throws -> Data {
-        let url = baseURL
-            .appendingPathComponent("op")
-            .appendingPathComponent(operationID)
+        guard let encoded = operationID.addingPercentEncoding(withAllowedCharacters: Self.operationIDAllowed),
+              let url = URL(string: baseURL.absoluteString.hasSuffix("/")
+                                ? "\(baseURL.absoluteString)op/\(encoded)"
+                                : "\(baseURL.absoluteString)/op/\(encoded)") else {
+            throw ProfiledOperationError.serverUnreachable(operationID: operationID)
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.httpBody = body

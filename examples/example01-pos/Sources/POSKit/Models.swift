@@ -1,6 +1,6 @@
 //
 //  Models.swift
-//  VenueKit
+//  POSKit
 //
 
 import Foundation
@@ -47,9 +47,4 @@ public struct AccountBalance: Codable, Sendable, CustomStringConvertible {
     public var description: String {
         "\(accountID): \(balance) (last doc \(lastDocument))"
     }
-}
-
-public enum VenueError: Error {
-    /// context.store does not conform to VenueStore.
-    case storeMismatch
 }

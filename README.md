@@ -32,8 +32,9 @@ Draft / phase 1 of 5 (see spec §9). Currently implemented:
 - `OperationRegistry` — server-side dispatch (operationID → decode envelope, execute,
   encode output); what phase 3's generated routes will register into.
 - Test suites: resolution, host routing, envelope round-trip.
-- [examples/VenueExample](examples/VenueExample) — the venue flow end-to-end over real
-  HTTP with hand-written envelopes (`swift run venue-demo`).
+- [examples/](examples) — tutorial series: 01 standalone POS (Core Data),
+  02 + server (MIOServerKit), 03 + manager app. End-to-end over real HTTP
+  with hand-written envelopes.
 
 Not yet: `@ExecutionProfile` macro (`MIOExecutionMacros`), build-tool plugin
 (`MIOExecutionGen`), MIOServerKit binding, idempotency dedup / auth middleware.
