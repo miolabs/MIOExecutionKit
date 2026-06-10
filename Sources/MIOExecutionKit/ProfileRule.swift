@@ -1,0 +1,61 @@
+//
+//  ProfileRule.swift
+//  MIOExecutionKit
+//
+
+/// One (profile, method, condition?) triple. The @ExecutionProfile macro takes
+/// a variadic list of these; rules are evaluated in declaration order, first
+/// match wins, and no match resolves to .local.
+public struct ProfileRule: Sendable {
+    public let profile: ExecutionProfile
+    public let method: SyncMethod
+    /// Evaluated at call time against the installation configuration.
+    /// Type-erased at construction from a typed KeyPath.
+    public let condition: (@Sendable (any ProfileConfiguration) -> Bool)?
+
+    public init(profile: ExecutionProfile,
+                method: SyncMethod,
+                condition: (@Sendable (any ProfileConfiguration) -> Bool)? = nil) {
+        self.profile = profile
+        self.method = method
+        self.condition = condition
+    }
+
+    public init<C: ProfileConfiguration>(profile: ExecutionProfile,
+                                         method: SyncMethod,
+                                         when keyPath: KeyPath<C, Bool> & Sendable) {
+        self.init(profile: profile, method: method) {
+            ($0 as? C)?[keyPath: keyPath] ?? false
+        }
+    }
+}
+
+/// The resolved decision for one call. `resolve()` is total: it always returns
+/// one of the three methods, falling back to .local when no rule matches.
+public struct ExecutionPlan: Sendable {
+    public let method: SyncMethod
+    public let operationID: String
+    public var isServerAuthoritative: Bool { method == .sync }
+
+    public init(method: SyncMethod, operationID: String) {
+        self.method = method
+        self.operationID = operationID
+    }
+}
+
+public enum ProfileResolution {
+    /// The entire resolution algorithm: first rule whose profile matches the
+    /// active profile and whose condition (if any) evaluates true wins; no
+    /// match resolves to .local. Runtime overrides (spec §3.6) sit above this
+    /// in the routers, not here.
+    public static func resolve(operationID: String,
+                               rules: [ProfileRule],
+                               profile: ExecutionProfile,
+                               configuration: any ProfileConfiguration) -> ExecutionPlan {
+        for rule in rules where rule.profile == profile {
+            if let condition = rule.condition, condition(configuration) == false { continue }
+            return ExecutionPlan(method: rule.method, operationID: operationID)
+        }
+        return ExecutionPlan(method: .local, operationID: operationID)
+    }
+}
